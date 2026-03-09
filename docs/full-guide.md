@@ -148,15 +148,21 @@ daily_stock_analysis/
 
 ### AI 模型配置
 
+> 完整说明见 [LLM 配置指南](LLM_CONFIG_GUIDE.md)（三层配置、渠道模式、Vision、Agent、排错）。
+
 | 变量名 | 说明 | 默认值 | 必填 |
 |--------|------|--------|:----:|
+| `LITELLM_MODEL` | 主模型，格式 `provider/model`（如 `gemini/gemini-2.5-flash`），推荐优先使用 | - | 否 |
+| `LITELLM_FALLBACK_MODELS` | 备选模型，逗号分隔 | - | 否 |
+| `LLM_CHANNELS` | 渠道名称列表（逗号分隔），配合 `LLM_{NAME}_*` 使用，详见 [LLM 配置指南](LLM_CONFIG_GUIDE.md) | - | 否 |
+| `LITELLM_CONFIG` | LiteLLM YAML 配置文件路径（高级） | - | 否 |
 | `AIHUBMIX_KEY` | [AIHubmix](https://aihubmix.com/?aff=CfMq) API Key，一 Key 切换使用全系模型，无需额外配置 Base URL | - | 可选 |
 | `GEMINI_API_KEY` | Google Gemini API Key | - | 可选 |
-| `GEMINI_MODEL` | 主模型名称 | `gemini-3-flash-preview` | 否 |
-| `GEMINI_MODEL_FALLBACK` | 备选模型 | `gemini-2.5-flash` | 否 |
+| `GEMINI_MODEL` | 主模型名称（legacy，`LITELLM_MODEL` 优先） | `gemini-3-flash-preview` | 否 |
+| `GEMINI_MODEL_FALLBACK` | 备选模型（legacy） | `gemini-2.5-flash` | 否 |
 | `OPENAI_API_KEY` | OpenAI 兼容 API Key | - | 可选 |
 | `OPENAI_BASE_URL` | OpenAI 兼容 API 地址 | - | 可选 |
-| `OPENAI_MODEL` | OpenAI 模型名称（AIHubmix 用户可填如 `gemini-3.1-pro-preview`、`gemini-3-flash-preview`、`gpt-5.2`） | `gpt-5.2` | 可选 |
+| `OPENAI_MODEL` | OpenAI 模型名称（legacy，AIHubmix 用户可填如 `gemini-3.1-pro-preview`、`gpt-5.2`） | `gpt-5.2` | 可选 |
 | `ANTHROPIC_API_KEY` | Anthropic Claude API Key | - | 可选 |
 | `ANTHROPIC_MODEL` | Claude 模型名称 | `claude-3-5-sonnet-20241022` | 可选 |
 | `ANTHROPIC_TEMPERATURE` | Claude 温度参数（0.0-1.0） | `0.7` | 可选 |
@@ -355,6 +361,8 @@ conda create -n stock python=3.10
 conda activate stock
 pip install -r requirements.txt
 ```
+
+**智能导入依赖**：`pypinyin`（名称→代码拼音匹配）和 `openpyxl`（Excel .xlsx 解析）已包含在 `requirements.txt` 中，执行上述 `pip install -r requirements.txt` 时会自动安装。若使用智能导入（图片/CSV/Excel/剪贴板）功能，请确保依赖已正确安装；缺失时可能报 `ModuleNotFoundError`。
 
 ### 命令行参数
 
@@ -656,7 +664,7 @@ OPENAI_MODEL=deepseek-chat
 
 ### LiteLLM 直接集成（多模型 + 多 Key 负载均衡）
 
-本项目通过 [LiteLLM](https://github.com/BerriAI/litellm) 统一调用所有 LLM，无需单独启动 Proxy 服务。
+详见 [LLM 配置指南](LLM_CONFIG_GUIDE.md)。本项目通过 [LiteLLM](https://github.com/BerriAI/litellm) 统一调用所有 LLM，无需单独启动 Proxy 服务。
 
 **两层机制**：同一模型多 Key 轮换（Router）与跨模型降级（Fallback）分层独立，互不干扰。
 
@@ -679,9 +687,17 @@ LITELLM_FALLBACK_MODELS=anthropic/claude-3-5-sonnet-20241022,openai/gpt-4o-mini
 
 **依赖说明**：`requirements.txt` 中保留 `openai>=1.0.0`，因 LiteLLM 内部依赖 OpenAI SDK 作为统一接口；显式保留可确保版本兼容性，用户无需单独配置。
 
-**视觉模型（图片提取股票代码）**：
+**视觉模型（图片提取股票代码）**：详见 [LLM 配置指南 - Vision](LLM_CONFIG_GUIDE.md#41-vision-模型图片识别股票代码)。
 
-从图片提取股票代码（如 `/api/v1/stocks/extract-from-image`）使用 LiteLLM Vision，采用 OpenAI `image_url` 格式，支持 Gemini、Claude、OpenAI、DeepSeek 等 Vision-capable 模型。
+从图片提取股票代码（如 `/api/v1/stocks/extract-from-image`）使用 LiteLLM Vision，采用 OpenAI `image_url` 格式，支持 Gemini、Claude、OpenAI、DeepSeek 等 Vision-capable 模型。返回 `items`（code、name、confidence）及兼容的 `codes` 数组。
+
+> 兼容性说明：`/api/v1/stocks/extract-from-image` 响应在原 `codes` 基础上新增 `items` 字段。若下游客户端使用严格 JSON Schema 且不接受未知字段，请同步更新 schema。
+
+**智能导入**：除图片外，还支持 CSV/Excel 文件及剪贴板粘贴（`/api/v1/stocks/parse-import`），自动解析代码/名称列，名称→代码解析支持本地映射、拼音匹配及 AkShare 在线 fallback。依赖 `pypinyin`（拼音匹配）和 `openpyxl`（Excel 解析），已包含在 `requirements.txt` 中。
+
+- **AkShare 名称解析缓存**：名称→代码解析使用 AkShare 在线 fallback 时，结果缓存 1 小时（TTL），避免频繁请求；首次调用或缓存过期后会自动刷新。
+- **CSV/Excel 列名**：支持 `code`、`股票代码`、`代码`、`name`、`股票名称`、`名称` 等（不区分大小写）；无表头时默认第 1 列为代码、第 2 列为名称。
+- **常见解析失败**：文件过大（>2MB）、编码非 UTF-8/GBK、Excel 工作表为空或损坏、CSV 分隔符/列数不一致时，API 会返回具体错误提示。
 
 - **模型优先级**：`VISION_MODEL` > `LITELLM_MODEL` > 根据已有 API Key 推断（`OPENAI_VISION_MODEL` 已废弃，请改用 `VISION_MODEL`）
 - **Provider 回退**：主模型失败时，按 `VISION_PROVIDER_PRIORITY`（默认 `gemini,anthropic,openai`）自动切换到下一个可用 provider
@@ -782,6 +798,7 @@ FastAPI 提供 RESTful API 服务，支持配置管理和触发分析。
 | `/api/v1/backtest/performance` | GET | 获取整体回测表现 |
 | `/api/v1/backtest/performance/{code}` | GET | 获取单股回测表现 |
 | `/api/v1/stocks/extract-from-image` | POST | 从图片提取股票代码（multipart，超时 60s） |
+| `/api/v1/stocks/parse-import` | POST | 解析 CSV/Excel/剪贴板（multipart file 或 JSON `{"text":"..."}`，文件≤2MB，文本≤100KB） |
 | `/api/health` | GET | 健康检查 |
 | `/docs` | GET | API Swagger 文档 |
 
